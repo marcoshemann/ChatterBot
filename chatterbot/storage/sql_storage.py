@@ -306,44 +306,45 @@ class SQLStorageAdapter(StorageAdapter):
         session.close()
         return statement
 
-    def get_response_statements(self, page_size=1000):
+    def get_response_statements(self, text=None, page_size=1000):
         """
         Return only statements that are in response to another statement.
         A statement must exist which lists the closest matching statement in the
         in_response_to field. Otherwise, the logic adapter may find a closest
         matching statement that does not have a known response.
         """
-        from sqlalchemy import func
+        from sqlalchemy import or_
 
         Statement = self.get_model('statement')
 
         session = self.Session()
 
-        total_statements = session.query(func.count(Statement.id)).scalar()
+        bigram_list = self.stemmer.get_bigram_pair_string(text or '').split(' ')
 
-        start = 0
-        stop = min(page_size, total_statements)
+        or_query = [
+            Statement.search_in_response_to.contains(bigram) for bigram in bigram_list
+        ]
 
-        while stop <= total_statements:
+        statement_set = session.query(Statement).filter(
+            Statement.in_response_to.isnot(None),
+            or_(*or_query)
+        )
 
-            statement_set = session.query(Statement).filter(
-                Statement.in_response_to.isnot(None)
-            ).slice(start, stop)
+        total_response_statements = statement_set.count()
 
-            start += page_size
-            stop += page_size
+        response_statements = set(
+            statement.in_response_to for statement in statement_set
+        )
 
-            response_statements = set(
-                statement.in_response_to for statement in statement_set
-            )
+        print('Length of statement set =', len(response_statements))
 
+        for start_index in range(0, total_response_statements, page_size):
             for statement in session.query(Statement).filter(
+                Statement.in_response_to.isnot(None),
                 Statement.text.in_(response_statements),
                 ~Statement.persona.startswith('bot:')
-            ):
-                yield self.model_to_object(statement)
-
-        session.close()
+            ).slice(start_index, start_index + page_size):
+                yield statement
 
     def drop(self):
         """
