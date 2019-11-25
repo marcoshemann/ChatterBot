@@ -2,33 +2,6 @@ import re
 from chatterbot.storage import StorageAdapter
 
 
-class Query(object):
-
-    def __init__(self, query={}):
-        self.query = query
-
-    def value(self):
-        return self.query.copy()
-
-    def raw(self, data):
-        query = self.query.copy()
-
-        query.update(data)
-
-        return Query(query)
-
-    def statement_in_response_to_not_in(self, statements):
-        query = self.query.copy()
-
-        if 'in_response_to' not in query:
-            query['in_response_to'] = {}
-
-        if '$nin' not in query['in_response_to']:
-            query['in_response_to']['$nin'] = statements
-
-        return Query(query)
-
-
 class MongoDatabaseAdapter(StorageAdapter):
     """
     The MongoDatabaseAdapter is an interface that allows
@@ -45,11 +18,11 @@ class MongoDatabaseAdapter(StorageAdapter):
     """
 
     def __init__(self, **kwargs):
-        super(MongoDatabaseAdapter, self).__init__(**kwargs)
+        super().__init__(**kwargs)
         from pymongo import MongoClient
         from pymongo.errors import OperationFailure
 
-        self.database_uri = self.kwargs.get(
+        self.database_uri = kwargs.get(
             'database_uri', 'mongodb://localhost:27017/chatterbot-database'
         )
 
@@ -67,8 +40,6 @@ class MongoDatabaseAdapter(StorageAdapter):
 
         # The mongo collection of statement documents
         self.statements = self.database['statements']
-
-        self.base_query = Query()
 
     def get_statement_model(self):
         """
@@ -103,29 +74,61 @@ class MongoDatabaseAdapter(StorageAdapter):
         """
         import pymongo
 
-        query = self.base_query
-
+        page_size = kwargs.pop('page_size', 1000)
         order_by = kwargs.pop('order_by', None)
         tags = kwargs.pop('tags', [])
-
-        # Convert a single sting into a list if only one tag is provided
-        if type(tags) == str:
-            tags = [tags]
-
-        query = query.raw(kwargs)
+        exclude_text = kwargs.pop('exclude_text', None)
+        exclude_text_words = kwargs.pop('exclude_text_words', [])
+        persona_not_startswith = kwargs.pop('persona_not_startswith', None)
+        search_text_contains = kwargs.pop('search_text_contains', None)
 
         if tags:
-            query = query.raw({
-                'tags': {
-                    '$in': tags
-                }
-            })
+            kwargs['tags'] = {
+                '$in': tags
+            }
 
-        matches = self.statements.find(query.value())
+        if exclude_text:
+            if 'text' not in kwargs:
+                kwargs['text'] = {}
+            elif 'text' in kwargs and isinstance(kwargs['text'], str):
+                text = kwargs.pop('text')
+                kwargs['text'] = {
+                    '$eq': text
+                }
+            kwargs['text']['$nin'] = exclude_text
+
+        if exclude_text_words:
+            if 'text' not in kwargs:
+                kwargs['text'] = {}
+            elif 'text' in kwargs and isinstance(kwargs['text'], str):
+                text = kwargs.pop('text')
+                kwargs['text'] = {
+                    '$eq': text
+                }
+            exclude_word_regex = '|'.join([
+                '.*{}.*'.format(word) for word in exclude_text_words
+            ])
+            kwargs['text']['$not'] = re.compile(exclude_word_regex)
+
+        if persona_not_startswith:
+            if 'persona' not in kwargs:
+                kwargs['persona'] = {}
+            elif 'persona' in kwargs and isinstance(kwargs['persona'], str):
+                persona = kwargs.pop('persona')
+                kwargs['persona'] = {
+                    '$eq': persona
+                }
+            kwargs['persona']['$not'] = re.compile('^bot:*')
+
+        if search_text_contains:
+            or_regex = '|'.join([
+                '{}'.format(re.escape(word)) for word in search_text_contains.split(' ')
+            ])
+            kwargs['search_text'] = re.compile(or_regex)
+
+        mongo_ordering = []
 
         if order_by:
-
-            mongo_ordering = []
 
             # Sort so that newer datetimes appear first
             if 'created_at' in order_by:
@@ -135,14 +138,15 @@ class MongoDatabaseAdapter(StorageAdapter):
             for order in order_by:
                 mongo_ordering.append((order, pymongo.ASCENDING))
 
-            matches = matches.sort(mongo_ordering)
+        total_statements = self.statements.find(kwargs).count()
 
-        results = []
-
-        for match in list(matches):
-            results.append(self.mongo_to_object(match))
-
-        return results
+        for start_index in range(0, total_statements, page_size):
+            if mongo_ordering:
+                for match in self.statements.find(kwargs).sort(mongo_ordering).skip(start_index).limit(page_size):
+                    yield self.mongo_to_object(match)
+            else:
+                for match in self.statements.find(kwargs).skip(start_index).limit(page_size):
+                    yield self.mongo_to_object(match)
 
     def create(self, **kwargs):
         """
@@ -155,11 +159,11 @@ class MongoDatabaseAdapter(StorageAdapter):
             kwargs['tags'] = list(set(kwargs['tags']))
 
         if 'search_text' not in kwargs:
-            kwargs['search_text'] = self.stemmer.get_bigram_pair_string(kwargs['text'])
+            kwargs['search_text'] = self.tagger.get_text_index_string(kwargs['text'])
 
         if 'search_in_response_to' not in kwargs:
             if kwargs.get('in_response_to'):
-                kwargs['search_in_response_to'] = self.stemmer.get_bigram_pair_string(kwargs['in_response_to'])
+                kwargs['search_in_response_to'] = self.tagger.get_text_index_string(kwargs['in_response_to'])
 
         inserted = self.statements.insert_one(kwargs)
 
@@ -174,22 +178,15 @@ class MongoDatabaseAdapter(StorageAdapter):
         create_statements = []
 
         for statement in statements:
-            statement_data = {
-                'text': statement.text,
-                'search_text': statement.search_text,
-                'conversation': statement.conversation,
-                'persona': statement.persona,
-                'in_response_to': statement.in_response_to,
-                'search_in_response_to': statement.search_in_response_to,
-                'created_at': statement.created_at,
-                'tags': list(set(statement.tags))
-            }
+            statement_data = statement.serialize()
+            tag_data = list(set(statement_data.pop('tags', [])))
+            statement_data['tags'] = tag_data
 
             if not statement.search_text:
-                statement_data['search_text'] = self.stemmer.get_bigram_pair_string(statement.text)
+                statement_data['search_text'] = self.tagger.get_text_index_string(statement.text)
 
             if not statement.search_in_response_to and statement.in_response_to:
-                statement_data['search_in_response_to'] = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                statement_data['search_in_response_to'] = self.tagger.get_text_index_string(statement.in_response_to)
 
             create_statements.append(statement_data)
 
@@ -200,10 +197,10 @@ class MongoDatabaseAdapter(StorageAdapter):
         data.pop('id', None)
         data.pop('tags', None)
 
-        data['search_text'] = self.stemmer.get_bigram_pair_string(data['text'])
+        data['search_text'] = self.tagger.get_text_index_string(data['text'])
 
         if data.get('in_response_to'):
-            data['search_in_response_to'] = self.stemmer.get_bigram_pair_string(data['in_response_to'])
+            data['search_in_response_to'] = self.tagger.get_text_index_string(data['in_response_to'])
 
         update_data = {
             '$set': data
@@ -257,53 +254,6 @@ class MongoDatabaseAdapter(StorageAdapter):
         Removes the statement that matches the input text.
         """
         self.statements.delete_one({'text': statement_text})
-
-    def get_response_statements(self, page_size=1000):
-        """
-        Return only statements that are in response to another statement.
-        A statement must exist which lists the closest matching statement in the
-        in_response_to field. Otherwise, the logic adapter may find a closest
-        matching statement that does not have a known response.
-        """
-        total_statements = self.count()
-        start = 0
-
-        _response_query = {
-            'in_response_to': {
-                '$ne': None
-            }
-        }
-
-        while start <= total_statements:
-
-            response_query = self.statements.find(
-                _response_query
-            ).skip(
-                start
-            ).limit(
-                page_size
-            )
-
-            start += page_size
-
-            responses = set(
-                statement['in_response_to'] for statement in response_query
-            )
-
-            _statement_query = {
-                'text': {
-                    '$in': list(responses)
-                },
-                'persona': {
-                    '$not': re.compile('^bot:*')
-                }
-            }
-
-            _statement_query.update(self.base_query.value())
-            statement_query = self.statements.find(_statement_query)
-
-            for statement in list(statement_query):
-                yield self.mongo_to_object(statement)
 
     def drop(self):
         """

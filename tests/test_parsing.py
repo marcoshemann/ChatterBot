@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 from unittest import TestCase
 from datetime import timedelta, datetime
 from chatterbot import parsing
@@ -13,7 +12,7 @@ class DateTimeParsingFunctionIntegrationTestCases(TestCase):
     """
 
     def setUp(self):
-        super(DateTimeParsingFunctionIntegrationTestCases, self).setUp()
+        super().setUp()
         self.base_date = datetime.now()
 
     def test_captured_pattern_is_on_date(self):

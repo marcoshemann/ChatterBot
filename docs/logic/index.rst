@@ -13,11 +13,6 @@ Logic adapters determine the logic for how ChatterBot selects a response to a gi
 The logic adapter that your bot uses can be specified by setting the ``logic_adapters`` parameter
 to the import path of the logic adapter you want to use.
 
-It is possible to enter any number of logic adapters for your bot to use.
-If multiple adapters are used, then the bot will return the response with
-the highest calculated confidence value. If multiple adapters return the
-same confidence, then the adapter that is entered into the list first will
-take priority.
 
 .. code-block:: python
 
@@ -27,6 +22,25 @@ take priority.
            "chatterbot.logic.BestMatch"
        ]
    )
+
+
+It is possible to enter any number of logic adapters for your bot to use.
+If multiple adapters are used, then the bot will return the response with
+the highest calculated confidence value. If multiple adapters return the
+same confidence, then the adapter that is entered into the list first will
+take priority.
+
+.. image:: ../_static/dialog-processing-flow.svg
+   :alt: ChatterBot dialog processing flow
+
+
+Common logic adapter attributes
+=================================
+
+Each logic adapter inherits the following attributes and methods.
+
+.. autoclass:: chatterbot.logic.LogicAdapter
+   :members:
 
 
 Best Match Adapter
@@ -53,8 +67,8 @@ Setting parameters
        logic_adapters=[
            {
                "import_path": "chatterbot.logic.BestMatch",
-               "statement_comparison_function": "chatterbot.comparisons.levenshtein_distance",
-               "response_selection_method": "chatterbot.response_selection.get_first_response"
+               "statement_comparison_function": chatterbot.comparisons.LevenshteinDistance,
+               "response_selection_method": chatterbot.response_selection.get_first_response
            }
        ]
    )
@@ -99,21 +113,6 @@ This adapter is able to handle any combination of word and numeric operators.
    Bot: (4 + 4) = 8
 
 
-Low Confidence Response Adapter
-===============================
-
-This adapter returns a specified default response if a response can not be
-determined with a high amount of confidence.
-
-.. autofunction:: chatterbot.logic.LowConfidenceAdapter
-
-Low confidence response example
--------------------------------
-
-.. literalinclude:: ../../examples/default_response_example.py
-   :language: python
-
-
 Specific Response Adapter
 =========================
 
@@ -126,4 +125,10 @@ Specific response example
 -------------------------
 
 .. literalinclude:: ../../examples/specific_response_example.py
+   :language: python
+
+Low confidence response example
+-------------------------------
+
+.. literalinclude:: ../../examples/default_response_example.py
    :language: python

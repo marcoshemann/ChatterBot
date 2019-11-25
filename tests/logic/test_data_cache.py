@@ -9,7 +9,7 @@ class DummyMutatorLogicAdapter(LogicAdapter):
     the resulting statement before it is returned.
     """
 
-    def process(self, statement):
+    def process(self, statement, additional_response_selection_parameters=None):
         statement.add_tags('pos_tags:NN')
 
         self.chatbot.storage.update(statement)
@@ -42,11 +42,11 @@ class DataCachingTests(ChatBotTestCase):
         and that this attribute is saved.
         """
         self.chatbot.get_response('Hello', conversation='test')
-        results = self.chatbot.storage.filter(
+        results = list(self.chatbot.storage.filter(
             text='Hello',
             in_response_to=None,
             conversation='test'
-        )
+        ))
 
         self.assertEqual(len(results), 1)
         self.assertIn('pos_tags:NN', results[0].get_tags())

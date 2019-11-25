@@ -5,9 +5,17 @@ Test ChatterBot's statement comparison algorithms.
 from unittest import TestCase
 from chatterbot.conversation import Statement
 from chatterbot import comparisons
+from chatterbot import languages
 
 
 class LevenshteinDistanceTestCase(TestCase):
+
+    def setUp(self):
+        super().setUp()
+
+        self.compare = comparisons.LevenshteinDistance(
+            language=languages.ENG
+        )
 
     def test_levenshtein_distance_statement_false(self):
         """
@@ -16,7 +24,7 @@ class LevenshteinDistanceTestCase(TestCase):
         statement = Statement(text='')
         other_statement = Statement(text='Hello')
 
-        value = comparisons.levenshtein_distance(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
         self.assertEqual(value, 0)
 
@@ -27,7 +35,7 @@ class LevenshteinDistanceTestCase(TestCase):
         statement = Statement(text='Hello')
         other_statement = Statement(text='')
 
-        value = comparisons.levenshtein_distance(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
         self.assertEqual(value, 0)
 
@@ -39,7 +47,7 @@ class LevenshteinDistanceTestCase(TestCase):
         statement = Statement(text=2)
         other_statement = Statement(text='Hello')
 
-        value = comparisons.levenshtein_distance(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
         self.assertEqual(value, 0)
 
@@ -50,20 +58,30 @@ class LevenshteinDistanceTestCase(TestCase):
         statement = Statement(text='Hi HoW ArE yOu?')
         other_statement = Statement(text='hI hOw are YoU?')
 
-        value = comparisons.levenshtein_distance(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
         self.assertEqual(value, 1)
 
 
-class SynsetDistanceTestCase(TestCase):
+class SpacySimilarityTests(TestCase):
 
-    def test_get_initialization_functions(self):
-        """
-        Test that the initialization functions are returned.
-        """
-        functions = comparisons.synset_distance.get_initialization_functions()
+    def setUp(self):
+        super().setUp()
 
-        self.assertIn('initialize_nltk_wordnet', functions)
+        self.compare = comparisons.SpacySimilarity(
+            language=languages.ENG
+        )
+
+    def test_exact_match_different_stopwords(self):
+        """
+        Test sentences with different stopwords.
+        """
+        statement = Statement(text='What is matter?')
+        other_statement = Statement(text='What is the matter?')
+
+        value = self.compare(statement, other_statement)
+
+        self.assertAlmostEqual(value, 0.9, places=1)
 
     def test_exact_match_different_capitalization(self):
         """
@@ -72,36 +90,9 @@ class SynsetDistanceTestCase(TestCase):
         statement = Statement(text='Hi HoW ArE yOu?')
         other_statement = Statement(text='hI hOw are YoU?')
 
-        value = comparisons.synset_distance(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
-        self.assertEqual(value, 1)
-
-
-class SentimentComparisonTestCase(TestCase):
-
-    def test_get_initialization_functions(self):
-        """
-        Test that the initialization functions are returned.
-        """
-        functions = comparisons.sentiment_comparison.get_initialization_functions()
-
-        self.assertIn('initialize_nltk_vader_lexicon', functions)
-
-    def test_exact_match_different_capitalization(self):
-        """
-        Test that text capitalization is ignored.
-        """
-        statement = Statement(text='Hi HoW ArE yOu?')
-        other_statement = Statement(text='hI hOw are YoU?')
-
-        # Prepare to do the comparison
-        functions = comparisons.sentiment_comparison.get_initialization_functions()
-        for function in functions.values():
-            function()
-
-        value = comparisons.sentiment_comparison(statement, other_statement)
-
-        self.assertEqual(value, 1)
+        self.assertAlmostEqual(value, 0.8, places=1)
 
 
 class JaccardSimilarityTestCase(TestCase):
@@ -109,19 +100,9 @@ class JaccardSimilarityTestCase(TestCase):
     def setUp(self):
         super().setUp()
 
-        # Initialize the comparison function
-        functions = comparisons.jaccard_similarity.get_initialization_functions()
-        for _, function in functions.items():
-            function()
-
-    def test_get_initialization_functions(self):
-        """
-        Test that the initialization functions are returned.
-        """
-        functions = comparisons.jaccard_similarity.get_initialization_functions()
-
-        self.assertIn('initialize_nltk_wordnet', functions)
-        self.assertIn('initialize_nltk_averaged_perceptron_tagger', functions)
+        self.compare = comparisons.JaccardSimilarity(
+            language=languages.ENG
+        )
 
     def test_exact_match_different_capitalization(self):
         """
@@ -130,6 +111,6 @@ class JaccardSimilarityTestCase(TestCase):
         statement = Statement(text='Hi HoW ArE yOu?')
         other_statement = Statement(text='hI hOw are YoU?')
 
-        value = comparisons.jaccard_similarity(statement, other_statement)
+        value = self.compare(statement, other_statement)
 
         self.assertEqual(value, 1)

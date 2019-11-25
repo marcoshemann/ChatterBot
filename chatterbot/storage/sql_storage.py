@@ -11,18 +11,18 @@ class SQLStorageAdapter(StorageAdapter):
     It will check if tables are present, if they are not, it will attempt
     to create the required tables.
 
-    :keyword database_uri: eg: sqlite:///database_test.db',
+    :keyword database_uri: eg: sqlite:///database_test.sqlite3',
         The database_uri can be specified to choose database driver.
     :type database_uri: str
     """
 
     def __init__(self, **kwargs):
-        super(SQLStorageAdapter, self).__init__(**kwargs)
+        super().__init__(**kwargs)
 
         from sqlalchemy import create_engine
         from sqlalchemy.orm import sessionmaker
 
-        self.database_uri = self.kwargs.get('database_uri', False)
+        self.database_uri = kwargs.get('database_uri', False)
 
         # None results in a sqlite in-memory database as the default
         if self.database_uri is None:
@@ -47,9 +47,6 @@ class SQLStorageAdapter(StorageAdapter):
             self.create_database()
 
         self.Session = sessionmaker(bind=self.engine, expire_on_commit=True)
-
-        # ChatterBot's internal query builder is not yet supported for this adapter
-        self.adapter_supports_queries = False
 
     def get_statement_model(self):
         """
@@ -105,13 +102,20 @@ class SQLStorageAdapter(StorageAdapter):
         listed attributes and in which all values match
         for all listed attributes will be returned.
         """
+        from sqlalchemy import or_
+
         Statement = self.get_model('statement')
         Tag = self.get_model('tag')
 
         session = self.Session()
 
+        page_size = kwargs.pop('page_size', 1000)
         order_by = kwargs.pop('order_by', None)
         tags = kwargs.pop('tags', [])
+        exclude_text = kwargs.pop('exclude_text', None)
+        exclude_text_words = kwargs.pop('exclude_text_words', [])
+        persona_not_startswith = kwargs.pop('persona_not_startswith', None)
+        search_text_contains = kwargs.pop('search_text_contains', None)
 
         # Convert a single sting into a list if only one tag is provided
         if type(tags) == str:
@@ -127,6 +131,32 @@ class SQLStorageAdapter(StorageAdapter):
                 Tag.name.in_(tags)
             )
 
+        if exclude_text:
+            statements = statements.filter(
+                ~Statement.text.in_(exclude_text)
+            )
+
+        if exclude_text_words:
+            or_word_query = [
+                Statement.text.ilike('%' + word + '%') for word in exclude_text_words
+            ]
+            statements = statements.filter(
+                ~or_(*or_word_query)
+            )
+
+        if persona_not_startswith:
+            statements = statements.filter(
+                ~Statement.persona.startswith('bot:')
+            )
+
+        if search_text_contains:
+            or_query = [
+                Statement.search_text.contains(word) for word in search_text_contains.split(' ')
+            ]
+            statements = statements.filter(
+                or_(*or_query)
+            )
+
         if order_by:
 
             if 'created_at' in order_by:
@@ -135,14 +165,13 @@ class SQLStorageAdapter(StorageAdapter):
 
             statements = statements.order_by(*order_by)
 
-        results = []
+        total_statements = statements.count()
 
-        for statement in statements:
-            results.append(self.model_to_object(statement))
+        for start_index in range(0, total_statements, page_size):
+            for statement in statements.slice(start_index, start_index + page_size):
+                yield self.model_to_object(statement)
 
         session.close()
-
-        return results
 
     def create(self, **kwargs):
         """
@@ -157,16 +186,17 @@ class SQLStorageAdapter(StorageAdapter):
         tags = set(kwargs.pop('tags', []))
 
         if 'search_text' not in kwargs:
-            kwargs['search_text'] = self.stemmer.get_bigram_pair_string(kwargs['text'])
+            kwargs['search_text'] = self.tagger.get_text_index_string(kwargs['text'])
 
         if 'search_in_response_to' not in kwargs:
-            if kwargs.get('in_response_to'):
-                kwargs['search_in_response_to'] = self.stemmer.get_bigram_pair_string(kwargs['in_response_to'])
+            in_response_to = kwargs.get('in_response_to')
+            if in_response_to:
+                kwargs['search_in_response_to'] = self.tagger.get_text_index_string(in_response_to)
 
         statement = Statement(**kwargs)
 
         for tag_name in tags:
-            tag = session.query(Tag).get(tag_name)
+            tag = session.query(Tag).filter_by(name=tag_name).first()
 
             if not tag:
                 # Create the tag
@@ -200,31 +230,33 @@ class SQLStorageAdapter(StorageAdapter):
 
         for statement in statements:
 
-            statement_model_object = Statement(
-                text=statement.text,
-                search_text=statement.search_text,
-                conversation=statement.conversation,
-                persona=statement.persona,
-                in_response_to=statement.in_response_to,
-                search_in_response_to=statement.search_in_response_to,
-                created_at=statement.created_at
-            )
+            statement_data = statement.serialize()
+            tag_data = statement_data.pop('tags', [])
+
+            statement_model_object = Statement(**statement_data)
 
             if not statement.search_text:
-                statement_model_object.search_text = self.stemmer.get_bigram_pair_string(statement.text)
+                statement_model_object.search_text = self.tagger.get_text_index_string(statement.text)
 
             if not statement.search_in_response_to and statement.in_response_to:
-                statement_model_object.search_in_response_to = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                statement_model_object.search_in_response_to = self.tagger.get_text_index_string(statement.in_response_to)
 
-            for tag_name in statement.tags:
+            new_tags = set(tag_data) - set(create_tags.keys())
+
+            if new_tags:
+                existing_tags = session.query(Tag).filter(
+                    Tag.name.in_(new_tags)
+                )
+
+                for existing_tag in existing_tags:
+                    create_tags[existing_tag.name] = existing_tag
+
+            for tag_name in tag_data:
                 if tag_name in create_tags:
                     tag = create_tags[tag_name]
                 else:
-                    tag = session.query(Tag).get(tag_name)
-
-                    if not tag:
-                        # Create the tag if it does not exist
-                        tag = Tag(name=tag_name)
+                    # Create the tag if it does not exist
+                    tag = Tag(name=tag_name)
 
                     create_tags[tag_name] = tag
 
@@ -267,13 +299,13 @@ class SQLStorageAdapter(StorageAdapter):
 
             record.created_at = statement.created_at
 
-            record.search_text = self.stemmer.get_bigram_pair_string(statement.text)
+            record.search_text = self.tagger.get_text_index_string(statement.text)
 
             if statement.in_response_to:
-                record.search_in_response_to = self.stemmer.get_bigram_pair_string(statement.in_response_to)
+                record.search_in_response_to = self.tagger.get_text_index_string(statement.in_response_to)
 
-            for tag_name in statement.tags:
-                tag = session.query(Tag).get(tag_name)
+            for tag_name in statement.get_tags():
+                tag = session.query(Tag).filter_by(name=tag_name).first()
 
                 if not tag:
                     # Create the record
@@ -305,45 +337,6 @@ class SQLStorageAdapter(StorageAdapter):
 
         session.close()
         return statement
-
-    def get_response_statements(self, page_size=1000):
-        """
-        Return only statements that are in response to another statement.
-        A statement must exist which lists the closest matching statement in the
-        in_response_to field. Otherwise, the logic adapter may find a closest
-        matching statement that does not have a known response.
-        """
-        from sqlalchemy import func
-
-        Statement = self.get_model('statement')
-
-        session = self.Session()
-
-        total_statements = session.query(func.count(Statement.id)).scalar()
-
-        start = 0
-        stop = min(page_size, total_statements)
-
-        while stop <= total_statements:
-
-            statement_set = session.query(Statement).filter(
-                Statement.in_response_to.isnot(None)
-            ).slice(start, stop)
-
-            start += page_size
-            stop += page_size
-
-            response_statements = set(
-                statement.in_response_to for statement in statement_set
-            )
-
-            for statement in session.query(Statement).filter(
-                Statement.text.in_(response_statements),
-                ~Statement.persona.startswith('bot:')
-            ):
-                yield self.model_to_object(statement)
-
-        session.close()
 
     def drop(self):
         """

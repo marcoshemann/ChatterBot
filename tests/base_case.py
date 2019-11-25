@@ -24,10 +24,10 @@ class ChatBotTestCase(TestCase):
 
     def get_kwargs(self):
         return {
-            'input_adapter': 'chatterbot.input.InputAdapter',
-            'output_adapter': 'chatterbot.output.OutputAdapter',
             # Run the test database in-memory
-            'database_uri': None
+            'database_uri': None,
+            # Don't execute initialization processes such as downloading required data
+            'initialize': False
         }
 
 
@@ -49,7 +49,7 @@ class ChatBotMongoTestCase(ChatBotTestCase):
             raise SkipTest('Unable to connect to Mongo DB.')
 
     def get_kwargs(self):
-        kwargs = super(ChatBotMongoTestCase, self).get_kwargs()
+        kwargs = super().get_kwargs()
         kwargs['database_uri'] = 'mongodb://localhost:27017/chatterbot_test_database'
         kwargs['storage_adapter'] = 'chatterbot.storage.MongoDatabaseAdapter'
         return kwargs
@@ -58,6 +58,6 @@ class ChatBotMongoTestCase(ChatBotTestCase):
 class ChatBotSQLTestCase(ChatBotTestCase):
 
     def get_kwargs(self):
-        kwargs = super(ChatBotSQLTestCase, self).get_kwargs()
+        kwargs = super().get_kwargs()
         kwargs['storage_adapter'] = 'chatterbot.storage.SQLStorageAdapter'
         return kwargs

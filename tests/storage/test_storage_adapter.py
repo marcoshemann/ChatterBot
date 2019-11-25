@@ -46,6 +46,10 @@ class StorageAdapterTestCase(TestCase):
         with self.assertRaises(StorageAdapter.AdapterMethodNotImplementedError):
             self.adapter.drop()
 
-    def test_get_response_statements(self):
-        with self.assertRaises(StorageAdapter.AdapterMethodNotImplementedError):
-            self.adapter.get_response_statements()
+    def test_get_model_invalid(self):
+        with self.assertRaises(AttributeError):
+            self.adapter.get_model('invalid')
+
+    def test_get_object_invalid(self):
+        with self.assertRaises(AttributeError):
+            self.adapter.get_object('invalid')
